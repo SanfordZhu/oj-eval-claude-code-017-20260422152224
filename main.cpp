@@ -34,8 +34,8 @@ inline void parseDate(const string &d, int &m,int &day){ m=(d[0]-'0')*10+(d[1]-'
 inline void parseTime(const string &t, int &h,int &mi){ h=(t[0]-'0')*10+(t[1]-'0'); mi=(t[3]-'0')*10+(t[4]-'0'); }
 inline int dateToAbs(int m,int d){ int days=(m==6?0:(m==7?30:61)); return days + (d-1); }
 inline void absToDate(int a,int &m,int &d){ if(a<30){ m=6; d=a+1; } else if(a<61){ m=7; d=a-29; } else { m=8; d=a-60; } }
-inline string fmtDate(int m,int d){ char buf[6]; sprintf(buf,"%02d-%02d",m,d); return string(buf); }
-inline string fmtTime(int h,int mi){ char buf[6]; sprintf(buf,"%02d:%02d",h,mi); return string(buf); }
+inline string fmtDate(int m,int d){ char buf[16]; sprintf(buf,"%02d-%02d",m,d); return string(buf); }
+inline string fmtTime(int h,int mi){ char buf[16]; sprintf(buf,"%02d:%02d",h,mi); return string(buf); }
 inline int addMinutes(int day,int h,int mi,int add){ int total=h*60+mi+add; int nd=day + total/1440; total%=1440; if(total<0){ total+=1440; nd--; } h=total/60; mi=total%60; return (nd<<16)|(h<<8)|mi; }
 
 inline void splitPipeAlloc(const string &s, string* &arr, int &cnt){ cnt=1; for(char c: s) if(c=='|') cnt++; arr = new string[cnt]; int idx=0; string cur; for(char c: s){ if(c=='|'){ arr[idx++]=cur; cur.clear(); } else cur.push_back(c);} arr[idx++]=cur; }
