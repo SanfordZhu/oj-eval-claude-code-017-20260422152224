@@ -24,8 +24,8 @@ inline string fmtDate(int m,int d){ char buf[16]; sprintf(buf,"%02d-%02d",m,d); 
 inline string fmtTime(int h,int mi){ char buf[16]; sprintf(buf,"%02d:%02d",h,mi); return string(buf); }
 inline int addMinutes(int day,int h,int mi,int add){ int total=h*60+mi+add; int nd=day + total/1440; total%=1440; if(total<0){ total+=1440; nd--; } h=total/60; mi=total%60; return (nd<<16)|(h<<8)|mi; }
 
-static const int MAX_USERS=200000;
-static const int MAX_TRAINS=20000;
+static int USER_CAP=1024;
+static int TRAIN_CAP=256;
 
 struct Order{ string status; string trainID, from, to; int depDay,depH,depMi; int arrDay,arrH,arrMi; int price; int num; };
 
@@ -35,20 +35,23 @@ struct Train{
     string id; int stationNum; int seatNum; char type; bool released;
     string *station; int *price; int *travel; int *stop;
     int saleStartM,saleStartD,saleEndM,saleEndD; int startHr,startMin;
-    int saleStartAbs,saleEndAbs; int segN; int saleDays; int *seat; // per baseStartAbs day, per segment
+    int saleStartAbs,saleEndAbs; int segN; int saleDays; int *seat;
 };
 
-User *users; int userCount=0; StrIntMap userIndex(1<<17);
-Train *trains; int trainCount=0; StrIntMap trainIndex(1<<15);
+User *users; int userCount=0; StrIntMap userIndex(1<<16);
+Train *trains; int trainCount=0; StrIntMap trainIndex(1<<14);
+
+inline void ensureUserCap(){ if(userCount<USER_CAP) return; int newCap=USER_CAP*2; User *nw=new User[newCap]; for(int i=0;i<userCount;i++) nw[i]=users[i]; delete[] users; users=nw; USER_CAP=newCap; }
+inline void ensureTrainCap(){ if(trainCount<TRAIN_CAP) return; int newCap=TRAIN_CAP*2; Train *nw=new Train[newCap]; for(int i=0;i<trainCount;i++) nw[i]=trains[i]; delete[] trains; trains=nw; TRAIN_CAP=newCap; }
 
 inline void splitPipeAlloc(const string &s, string* &arr, int &cnt){ cnt=1; for(char c: s) if(c=='|') cnt++; arr = new string[cnt]; int idx=0; string cur; for(char c: s){ if(c=='|'){ arr[idx++]=cur; cur.clear(); } else cur.push_back(c);} arr[idx++]=cur; }
 inline void splitTokens(const string &line, string *&arr, int &cnt){ cnt=0; int n=line.size(); string cur; for(int i=0;i<n;i++){ char c=line[i]; if(c==' '||c=='\t'||c=='\r'||c=='\n'){ if(cur.size()){ cnt++; cur.clear(); } } else cur.push_back(c); } if(cur.size()) cnt++; arr=new string[cnt]; int idx=0; cur.clear(); for(int i=0;i<n;i++){ char c=line[i]; if(c==' '||c=='\t'||c=='\r'||c=='\n'){ if(cur.size()){ arr[idx++]=cur; cur.clear(); } } else cur.push_back(c); } if(cur.size()) arr[idx++]=cur; }
 inline bool getArg(string *tok,int cnt,const string &key,string &val){ for(int i=1;i<cnt-1;i++){ if(tok[i]==key){ val=tok[i+1]; return true; } } return false; }
 
 int add_user(const string &c,const string &u,const string &p,const string &n,const string &m,int g){
-    if(userCount==0){ if(userIndex.get(u)!=-1) return -1; users[userCount]={u,p,n,m,10,true,nullptr,0,0}; userIndex.put(u,userCount); userCount++; return 0; }
+    if(userCount==0){ if(userIndex.get(u)!=-1) return -1; users[userCount]={u,p,n,m,10,true,nullptr,0,0}; userIndex.put(u,userCount); userCount++; ensureUserCap(); return 0; }
     int ci=userIndex.get(c); if(ci==-1||!users[ci].online) return -1; if(userIndex.get(u)!=-1) return -1; if(g>=users[ci].priv) return -1;
-    users[userCount]={u,p,n,m,g,false,nullptr,0,0}; userIndex.put(u,userCount); userCount++; return 0;
+    users[userCount]={u,p,n,m,g,false,nullptr,0,0}; userIndex.put(u,userCount); userCount++; ensureUserCap(); return 0;
 }
 
 int login(const string &u,const string &p){ int i=userIndex.get(u); if(i==-1) return -1; if(users[i].online) return -1; if(users[i].password!=p) return -1; users[i].online=true; return 0; }
@@ -63,7 +66,7 @@ int add_train(const string &id,int n,int seat,const string &stationsStr,const st
     string *trav; int tc; splitPipeAlloc(travStr, trav, tc); for(int i=0;i<n-1;i++) t.travel[i]=stoi(trav[i]); delete[] trav;
     if(n>=3){ string *stops; int oc; splitPipeAlloc(stopStr, stops, oc); for(int i=0;i<n-2;i++) t.stop[i]=stoi(stops[i]); delete[] stops; }
     int h,mi; parseTime(startT,h,mi); t.startHr=h; t.startMin=mi; string *sale; int dc; splitPipeAlloc(saleStr, sale, dc); int sm,sd,em,ed; parseDate(sale[0],sm,sd); parseDate(sale[1],em,ed); t.saleStartM=sm; t.saleStartD=sd; t.saleEndM=em; t.saleEndD=ed; delete[] sale; t.saleStartAbs=dateToAbs(t.saleStartM,t.saleStartD); t.saleEndAbs=dateToAbs(t.saleEndM,t.saleEndD); t.segN=n-1; t.saleDays=t.saleEndAbs - t.saleStartAbs + 1;
-    trainIndex.put(id,trainCount); trainCount++; return 0; }
+    trainIndex.put(id,trainCount); trainCount++; ensureTrainCap(); return 0; }
 
 int release_train(const string &id){ int i=trainIndex.get(id); if(i==-1) return -1; if(trains[i].released) return -1; Train &t=trains[i]; t.released=true; t.seat = new int[t.saleDays * t.segN]; for(int d=0; d<t.saleDays; ++d){ for(int s=0;s<t.segN;s++) t.seat[d*t.segN+s]=t.seatNum; } return 0; }
 int delete_train(const string &id){ int i=trainIndex.get(id); if(i==-1) return -1; if(trains[i].released) return -1; trainIndex.del(id); return 0; }
@@ -84,7 +87,7 @@ int query_train(const string &id,const string &date){ int i=trainIndex.get(id); 
 struct TicketAns{ string tid, from, to; int depDay, depH, depMi; int arrDay, arrH, arrMi; int price; int seat; int rideMin; };
 void sortBy(TicketAns *arr,int n,bool byTime){ for(int i=0;i<n;i++){ int best=i; for(int j=i+1;j<n;j++){ if(byTime){ if(arr[j].rideMin<arr[best].rideMin || (arr[j].rideMin==arr[best].rideMin && arr[j].tid < arr[best].tid)) best=j; } else { if(arr[j].price<arr[best].price || (arr[j].price==arr[best].price && arr[j].tid < arr[best].tid)) best=j; } } if(best!=i){ TicketAns tmp=arr[i]; arr[i]=arr[best]; arr[best]=tmp; } } }
 
-int query_ticket(const string &from,const string &to,const string &date,const string &pref){ int qM,qD; parseDate(date,qM,qD); int qAbs=dateToAbs(qM,qD); TicketAns *res=new TicketAns[MAX_TRAINS]; int cnt=0; for(int ti=0; ti<trainCount; ++ti){ Train &t=trains[ti]; if(!t.released) continue; int si=-1, sj=-1; for(int i=0;i<t.stationNum;i++){ if(t.station[i]==from) { si=i; break; } } if(si==-1) continue; for(int j=si+1;j<t.stationNum;j++){ if(t.station[j]==to){ sj=j; break; } } if(sj==-1) continue; int offsetMin=0; for(int k=0;k<si;k++){ offsetMin += t.travel[k]; if(k<=t.stationNum-2-1) offsetMin += t.stop[k]; }
+int query_ticket(const string &from,const string &to,const string &date,const string &pref){ int qM,qD; parseDate(date,qM,qD); int qAbs=dateToAbs(qM,qD); TicketAns *res=new TicketAns[TRAIN_CAP]; int cnt=0; for(int ti=0; ti<trainCount; ++ti){ Train &t=trains[ti]; if(!t.released) continue; int si=-1, sj=-1; for(int i=0;i<t.stationNum;i++){ if(t.station[i]==from) { si=i; break; } } if(si==-1) continue; for(int j=si+1;j<t.stationNum;j++){ if(t.station[j]==to){ sj=j; break; } } if(sj==-1) continue; int offsetMin=0; for(int k=0;k<si;k++){ offsetMin += t.travel[k]; if(k<=t.stationNum-2-1) offsetMin += t.stop[k]; }
         int offsetDay = offsetMin/1440; int baseStartAbs = qAbs - offsetDay; if(baseStartAbs<t.saleStartAbs || baseStartAbs>t.saleEndAbs) continue;
         int startTotal=t.startHr*60+t.startMin; int depTotal=(startTotal + offsetMin)%1440; int depDay=qAbs; int depH=depTotal/60, depMi=depTotal%60;
         int rideMin=0; for(int k=si;k<sj;k++) rideMin+=t.travel[k]; int arrPack = addMinutes(depDay, depH, depMi, rideMin); int arrDay=arrPack>>16, arrH=(arrPack>>8)&255, arrMi=arrPack&255;
@@ -113,8 +116,7 @@ int query_order(const string &uname){ int ui=userIndex.get(uname); if(ui==-1||!u
 int refund_ticket(const string &uname,int nth){ int ui=userIndex.get(uname); if(ui==-1||!users[ui].online) return -1; int idx=users[ui].ocnt - nth; if(idx<0 || idx>=users[ui].ocnt) return -1; Order &o=users[ui].orders[idx]; if(o.status=="refunded") return -1; int ti=trainIndex.get(o.trainID); if(ti==-1) return -1; Train &t=trains[ti]; int si=findStation(t,o.from); int sj=findStation(t,o.to); int offsetMin=0; for(int k=0;k<si;k++){ offsetMin+=t.travel[k]; if(k<=t.stationNum-2-1) offsetMin+=t.stop[k]; } int offsetDay=offsetMin/1440; int baseStartAbs=o.depDay - offsetDay; int dayIdx=baseStartAbs - t.saleStartAbs; if(o.status=="success"){ for(int k=si;k<sj;k++) t.seat[dayIdx*t.segN + k]+=o.num; } o.status="refunded"; printf("0\n"); return 0; }
 
 int main(){ ios::sync_with_stdio(false); cin.tie(nullptr);
-    users = new User[MAX_USERS]; trains = new Train[MAX_TRAINS];
-    for(int i=0;i<MAX_USERS;i++){ users[i].orders=nullptr; users[i].ocnt=0; users[i].ocap=0; users[i].online=false; }
+    users = new User[USER_CAP]; trains = new Train[TRAIN_CAP];
     string line; while(true){ if(!std::getline(cin,line)) break; if(line.empty()) continue; string *tok; int cnt; splitTokens(line,tok,cnt); if(cnt==0){ delete[] tok; continue; } string cmd=tok[0];
         if(cmd=="add_user"){ string c,u,p,n,m,gs; getArg(tok,cnt,"-c",c); getArg(tok,cnt,"-u",u); getArg(tok,cnt,"-p",p); getArg(tok,cnt,"-n",n); getArg(tok,cnt,"-m",m); getArg(tok,cnt,"-g",gs); int g=gs.empty()?0:stoi(gs); printf("%d\n", add_user(c,u,p,n,m,g)); }
         else if(cmd=="login"){ string u,p; getArg(tok,cnt,"-u",u); getArg(tok,cnt,"-p",p); printf("%d\n", login(u,p)); }
